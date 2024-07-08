@@ -4162,15 +4162,6 @@ HashMap<StringName, Variant> EditorNode::get_modified_properties_for_node(Node *
 	return modified_property_map;
 }
 
-void EditorNode::update_ownership_table_for_addition_node_ancestors(Node *p_current_node, HashMap<Node *, Node *> &p_ownership_table) {
-	p_ownership_table.insert(p_current_node, p_current_node->get_owner());
-
-	for (int i = 0; i < p_current_node->get_child_count(); i++) {
-		Node *child = p_current_node->get_child(i);
-		update_ownership_table_for_addition_node_ancestors(child, p_ownership_table);
-	}
-}
-
 void EditorNode::update_node_from_node_modification_entry(Node *p_node, ModificationNodeEntry &p_node_modification) {
 	if (p_node) {
 		// First, attempt to restore the script property since it may affect the get_property_list method.
@@ -4365,8 +4356,7 @@ void EditorNode::update_reimported_diff_data_for_node(
 		// For now instead, assume all ownerless nodes are transient and will have to be recreated.
 		if (p_node->get_owner()) {
 			HashMap<StringName, Variant> modified_properties = get_modified_properties_for_node(p_node, true);
-
-			if (p_node->get_parent()->get_owner() != nullptr && p_node->get_parent()->get_owner() != p_edited_scene) {
+			if (p_node->get_owner() == p_edited_scene) {
 				AdditiveNodeEntry new_additive_node_entry;
 				new_additive_node_entry.node = p_node;
 				new_additive_node_entry.parent = p_reimported_root->get_path_to(p_node->get_parent());
@@ -4382,18 +4372,8 @@ void EditorNode::update_reimported_diff_data_for_node(
 					new_additive_node_entry.transform_3d = node_3d->get_relative_transform(node_3d->get_parent());
 				}
 
-				// Gathers the ownership of all ancestor nodes for later use.
-				HashMap<Node *, Node *> ownership_table;
-				for (int i = 0; i < p_node->get_child_count(); i++) {
-					Node *child = p_node->get_child(i);
-					update_ownership_table_for_addition_node_ancestors(child, ownership_table);
-				}
-
-				new_additive_node_entry.ownership_table = ownership_table;
-
 				p_addition_list.push_back(new_additive_node_entry);
 			}
-
 			if (!modified_properties.is_empty()) {
 				ModificationNodeEntry modification_node_entry;
 				modification_node_entry.property_table = modified_properties;
@@ -6047,18 +6027,6 @@ void EditorNode::reload_instances_with_path_in_edited_scenes(const String &p_ins
 						if (node_3d) {
 							node_3d->set_transform(additive_node_entry.transform_3d);
 						}
-					}
-
-					// Restore the ownership of its ancestors
-					for (KeyValue<Node *, Node *> &E : additive_node_entry.ownership_table) {
-						Node *current_ancestor = E.key;
-						Node *ancestor_owner = E.value;
-
-						if (ancestor_owner == original_node) {
-							ancestor_owner = instantiated_node;
-						}
-
-						current_ancestor->set_owner(ancestor_owner);
 					}
 				}
 

@@ -803,8 +803,6 @@ public:
 		// Used if the original parent node is lost
 		Transform2D transform_2d;
 		Transform3D transform_3d;
-		// Used to keep track of the ownership of all ancestor nodes so they can be restored later.
-		HashMap<Node *, Node *> ownership_table;
 	};
 
 	struct ConnectionWithNodePath {
@@ -819,7 +817,6 @@ public:
 		List<Node::GroupInfo> groups;
 	};
 
-	void update_ownership_table_for_addition_node_ancestors(Node *p_current_node, HashMap<Node *, Node *> &p_ownership_table);
 	void update_node_from_node_modification_entry(Node *p_node, ModificationNodeEntry &p_node_modification);
 
 	void update_node_reference_modification_table_for_node(

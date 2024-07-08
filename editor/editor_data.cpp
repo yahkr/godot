@@ -719,6 +719,18 @@ bool EditorData::check_and_update_scene(int p_idx) {
 				new_selection.push_back(new_node);
 			}
 		}
+		if (pscene.is_valid()) {
+			//Apply Overrides when instanced scene gets updated
+			auto o = pscene->get_state()->get_overrides();
+			for (int i = 0; i < o.size(); i++) {
+				Node *e = new_scene->get_node_or_null(pscene->get_state()->get_overrides_path(i, false));
+				for (int j = 0; j < o[i].properties.size(); j++) {
+					String name = pscene->get_state()->convert_prop_name(o[i].properties[j].name);
+					Variant value = pscene->get_state()->convert_variant(o[i].properties[j].value);
+					e->set(name, value);
+				}
+			}
+		}
 
 		new_scene->set_scene_file_path(edited_scene[p_idx].root->get_scene_file_path());
 		Node *old_root = edited_scene[p_idx].root;

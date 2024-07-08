@@ -4115,6 +4115,18 @@ Error EditorNode::load_scene(const String &p_scene, bool p_ignore_broken_deps, b
 			}
 		}
 	}
+	// Apply Overrides when loading a scene
+	Ref<SceneState> ss = sdata->get_state();
+	auto overrides = ss->get_override_instances();
+	for (int i = 0; i < overrides.size(); i++) {
+		auto o_data = overrides[i];
+		for (int j = 0; j < o_data.properties.size(); ++j) {
+			Node *ei = new_scene->get_node_or_null(ss->get_override_path(i, false));
+			if (ei != nullptr) {
+				ei->set(o_data.properties[j].name, ss->convert_variant(o_data.properties[j].value));
+			}
+		}
+	}
 
 	if (!restoring_scenes) {
 		save_editor_layout_delayed();

@@ -397,6 +397,55 @@ Ref<PackedScene> ResourceLoaderText::_parse_node_tag(VariantParser::ResourcePars
 					return packed_scene;
 				}
 			}
+		} else if (next_tag.name == "override") {
+			NodePath path = next_tag.fields["path"];
+			auto o_data = packed_scene->get_state()->gen_override_data();
+			HashSet<StringName> path_properties;
+			o_data.path = path;
+			while (true) {
+				String assign;
+				Variant value;
+
+				error = VariantParser::parse_tag_assign_eof(&stream, lines, error_text, next_tag, assign, value, &parser);
+
+				if (error) {
+					if (error == ERR_FILE_MISSING_DEPENDENCIES) {
+						// Resource loading error, just skip it.
+					} else if (error != ERR_FILE_EOF) {
+						ERR_PRINT(vformat("Parse Error: %s. [Resource file %s:%d]", error_names[error], res_path, lines));
+						return Ref<PackedScene>();
+					} else {
+						error = OK;
+						packed_scene->get_state()->add_override(o_data);
+						return packed_scene;
+					}
+				}
+
+				if (!assign.is_empty()) {
+					StringName assign_name = assign;
+					auto o_prop = packed_scene->get_state()->gen_property();
+					o_prop.name = assign_name;
+					o_prop.value = packed_scene->get_state()->add_value(value);
+					o_data.properties.push_back(o_prop);
+				} else if (!next_tag.name.is_empty()) {
+					break;
+				}
+			}
+
+			packed_scene->get_state()->add_override(o_data);
+			continue;
+
+			error = VariantParser::parse_tag(&stream, lines, error_text, next_tag, &parser);
+
+			if (error) {
+				if (error != ERR_FILE_EOF) {
+					_printerr();
+					return Ref<PackedScene>();
+				} else {
+					error = OK;
+					return packed_scene;
+				}
+			}
 		} else {
 			error = ERR_FILE_CORRUPT;
 			_printerr();
@@ -2046,6 +2095,29 @@ Error ResourceFormatSaverTextInstance::save(const String &p_path, const Ref<Reso
 				f->store_line("");
 			}
 			f->store_line("[editable path=\"" + editable_instances[i].operator String().c_escape() + "\"]");
+		}
+
+		// Store Overrides
+		auto overrides = state->get_overrides();
+		for (int i = 0; i < overrides.size(); i++) {
+			if (i == 0) {
+				f->store_line("");
+			}
+
+			NodePath path = state->get_overrides_path(i, false);
+			int prop_count = state->get_override_node_property_count(i);
+			if (prop_count > 0) {
+				f->store_line("[override path=\"" + path + "\"]");
+				for (int j = 0; j < state->get_override_node_property_count(i); j++) {
+					String vars;
+					VariantWriter::write_to_string(state->get_override_node_property_value(i, j), vars, _write_resources, this);
+
+					f->store_string(String(state->get_override_node_property_name(i, j)).property_name_encode() + " = " + vars + "\n");
+				}
+				if (i < overrides.size() - 1) {
+					f->store_line(String());
+				}
+			}
 		}
 	}
 

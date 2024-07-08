@@ -607,6 +607,16 @@ Node *SceneState::instantiate(GenEditState p_edit_state) const {
 		}
 	}
 
+	// Apply Overrides
+	for (int i = 0; i < override_instances.size(); i++) {
+		Node *ei = ret_nodes[0]->get_node_or_null(override_instances[i].path);
+		if (ei != nullptr) {
+			auto override_properties = override_instances[i].properties;
+			for (auto prop : override_properties) {
+				ei->set(prop.name, convert_variant(prop.value));
+			}
+		}
+	}
 	return ret_nodes[0];
 }
 
@@ -674,74 +684,7 @@ static int _vm_get_variant(const Variant &p_variant, HashMap<Variant, int, Varia
 	return idx;
 }
 
-Error SceneState::_parse_node(Node *p_owner, Node *p_node, int p_parent_idx, HashMap<StringName, int> &name_map, HashMap<Variant, int, VariantHasher, VariantComparator> &variant_map, HashMap<Node *, int> &node_map, HashMap<Node *, int> &nodepath_map) {
-	// this function handles all the work related to properly packing scenes, be it
-	// instantiated or inherited.
-	// given the complexity of this process, an attempt will be made to properly
-	// document it. if you fail to understand something, please ask!
-
-	//discard nodes that do not belong to be processed
-	if ((p_node->get_internal_mode() != Node::INTERNAL_MODE_DISABLED || !p_node->is_child_of_exposed_node(p_owner)) && p_node != p_owner && p_node->get_owner() != p_owner && !p_owner->is_editable_instance(p_node->get_owner())) {
-		return OK;
-	}
-
-	bool is_editable_instance = false;
-
-	// save the child instantiated scenes that are chosen as editable, so they can be restored
-	// upon load back
-	if (p_node != p_owner && !p_node->get_scene_file_path().is_empty() && p_owner->is_editable_instance(p_node)) {
-		editable_instances.push_back(p_owner->get_path_to(p_node));
-		// Node is the root of an editable instance.
-		is_editable_instance = true;
-	} else if (p_node->get_owner() && p_owner->is_ancestor_of(p_node->get_owner()) && p_owner->is_editable_instance(p_node->get_owner())) {
-		// Node is part of an editable instance.
-		is_editable_instance = true;
-	}
-
-	NodeData nd;
-
-	nd.name = _nm_get_string(p_node->get_name(), name_map);
-	nd.instance = -1; //not instantiated by default
-
-	//really convoluted condition, but it basically checks that index is only saved when part of an inherited scene OR the node parent is from the edited scene
-	if (p_owner->get_scene_inherited_state().is_null() && (p_node == p_owner || (p_node->get_owner() == p_owner && (p_node->get_parent() == p_owner || p_node->get_parent()->get_owner() == p_owner)))) {
-		//do not save index, because it belongs to saved scene and scene is not inherited
-		nd.index = -1;
-	} else if (p_node == p_owner) {
-		//This (hopefully) happens if the node is a scene root, so its index is irrelevant.
-		nd.index = -1;
-	} else {
-		//part of an inherited scene, or parent is from an instantiated scene
-		nd.index = p_node->get_index();
-	}
-
-	// if this node is part of an instantiated scene or sub-instantiated scene
-	// we need to get the corresponding instance states.
-	// with the instance states, we can query for identical properties/groups
-	// and only save what has changed
-
-	bool instantiated_by_owner = false;
-	Vector<SceneState::PackState> states_stack = PropertyUtils::get_node_states_stack(p_node, p_owner, &instantiated_by_owner);
-
-	if (!p_node->get_scene_file_path().is_empty() && p_node->get_owner() == p_owner && instantiated_by_owner) {
-		if (p_node->get_scene_instance_load_placeholder()) {
-			//it's a placeholder, use the placeholder path
-			nd.instance = _vm_get_variant(p_node->get_scene_file_path(), variant_map);
-			nd.instance |= FLAG_INSTANCE_IS_PLACEHOLDER;
-		} else {
-			//must instance ourselves
-			Ref<PackedScene> instance = ResourceLoader::load(p_node->get_scene_file_path());
-			if (!instance.is_valid()) {
-				return ERR_CANT_OPEN;
-			}
-
-			nd.instance = _vm_get_variant(instance, variant_map);
-		}
-	}
-
-	// all setup, we then proceed to check all properties for the node
-	// and save the ones that are worth saving
-
+void SceneState::process_properties(Node *p_node, HashMap<StringName, int> &name_map, HashMap<Variant, int, VariantHasher, VariantComparator> &variant_map, NodeData &nd, Vector<PackState> states_stack) {
 	List<PropertyInfo> plist;
 	p_node->get_property_list(&plist);
 
@@ -841,6 +784,100 @@ Error SceneState::_parse_node(Node *p_owner, Node *p_node, int p_parent_idx, Has
 		}
 		nd.properties.push_back(prop);
 	}
+}
+
+Error SceneState::_parse_node(Node *p_owner, Node *p_node, int p_parent_idx, HashMap<StringName, int> &name_map, HashMap<Variant, int, VariantHasher, VariantComparator> &variant_map, HashMap<Node *, int> &node_map, HashMap<Node *, int> &nodepath_map) {
+	// this function handles all the work related to properly packing scenes, be it
+	// instantiated or inherited.
+	// given the complexity of this process, an attempt will be made to properly
+	// document it. if you fail to understand something, please ask!
+
+	// Save the exposed node's overriden properties (if any)
+	if (p_node->is_exposed_in_owner() && p_owner != p_node->get_parent() && !p_owner->is_editable_instance(p_node->get_owner())) {
+		NodeData exposedData;
+		exposedData.name = _nm_get_string(p_node->get_name(), name_map);
+		Vector<SceneState::PackState> states_stack = PropertyUtils::get_node_states_stack(p_node, p_owner, false);
+		process_properties(p_node, name_map, variant_map, exposedData, states_stack);
+		if (p_parent_idx == NO_PARENT_SAVED) {
+			int sidx;
+			if (nodepath_map.has(p_node->get_owner())) {
+				sidx = nodepath_map[p_node->get_owner()];
+			} else {
+				sidx = nodepath_map.size();
+				nodepath_map[p_node->get_owner()] = sidx;
+			}
+			exposedData.parent = FLAG_ID_IS_PATH | sidx;
+		} else {
+			exposedData.parent = p_parent_idx;
+		}
+		if (exposedData.properties.size() > 0) {
+			overrides.push_back(exposedData);
+		}
+	}
+
+	//discard nodes that do not belong to be processed
+	if ((p_node->get_internal_mode() != Node::INTERNAL_MODE_DISABLED || !p_node->is_child_of_exposed_node(p_owner)) && p_node != p_owner && p_node->get_owner() != p_owner && !p_owner->is_editable_instance(p_node->get_owner())) {
+		return OK;
+	}
+
+	bool is_editable_instance = false;
+
+	// save the child instantiated scenes that are chosen as editable, so they can be restored
+	// upon load back
+	if (p_node != p_owner && !p_node->get_scene_file_path().is_empty() && p_owner->is_editable_instance(p_node)) {
+		editable_instances.push_back(p_owner->get_path_to(p_node));
+		// Node is the root of an editable instance.
+		is_editable_instance = true;
+	} else if (p_node->get_owner() && p_owner->is_ancestor_of(p_node->get_owner()) && p_owner->is_editable_instance(p_node->get_owner())) {
+		// Node is part of an editable instance.
+		is_editable_instance = true;
+	}
+
+	NodeData nd;
+
+	nd.name = _nm_get_string(p_node->get_name(), name_map);
+	nd.instance = -1; //not instantiated by default
+
+	//really convoluted condition, but it basically checks that index is only saved when part of an inherited scene OR the node parent is from the edited scene
+	if (p_owner->get_scene_inherited_state().is_null() && (p_node == p_owner || (p_node->get_owner() == p_owner && (p_node->get_parent() == p_owner || p_node->get_parent()->get_owner() == p_owner)))) {
+		//do not save index, because it belongs to saved scene and scene is not inherited
+		nd.index = -1;
+	} else if (p_node == p_owner) {
+		//This (hopefully) happens if the node is a scene root, so its index is irrelevant.
+		nd.index = -1;
+	} else {
+		//part of an inherited scene, or parent is from an instantiated scene
+		nd.index = p_node->get_index();
+	}
+
+	// if this node is part of an instantiated scene or sub-instantiated scene
+	// we need to get the corresponding instance states.
+	// with the instance states, we can query for identical properties/groups
+	// and only save what has changed
+
+	bool instantiated_by_owner = false;
+	Vector<SceneState::PackState> states_stack = PropertyUtils::get_node_states_stack(p_node, p_owner, &instantiated_by_owner);
+
+	if (!p_node->get_scene_file_path().is_empty() && p_node->get_owner() == p_owner && instantiated_by_owner) {
+		if (p_node->get_scene_instance_load_placeholder()) {
+			//it's a placeholder, use the placeholder path
+			nd.instance = _vm_get_variant(p_node->get_scene_file_path(), variant_map);
+			nd.instance |= FLAG_INSTANCE_IS_PLACEHOLDER;
+		} else {
+			//must instance ourselves
+			Ref<PackedScene> instance = ResourceLoader::load(p_node->get_scene_file_path());
+			if (!instance.is_valid()) {
+				return ERR_CANT_OPEN;
+			}
+
+			nd.instance = _vm_get_variant(instance, variant_map);
+		}
+	}
+
+	// all setup, we then proceed to check all properties for the node
+	// and save the ones that are worth saving
+
+	process_properties(p_node, name_map, variant_map, nd, states_stack);
 
 	// save the groups this node is into
 	// discard groups that come from the original scene
@@ -1746,15 +1783,80 @@ NodePath SceneState::get_node_path(int p_idx, bool p_for_parent) const {
 	return NodePath(sub_path, false);
 }
 
+NodePath SceneState::get_overrides_path(int p_idx, bool p_for_parent) const {
+	ERR_FAIL_INDEX_V(p_idx, overrides.size(), NodePath());
+
+	if (overrides[p_idx].parent < 0 || overrides[p_idx].parent == NO_PARENT_SAVED) {
+		if (p_for_parent) {
+			return NodePath();
+		} else {
+			return NodePath(".");
+		}
+	}
+
+	Vector<StringName> sub_path;
+	NodePath base_path;
+	sub_path.insert(0, "%" + names[overrides[p_idx].name]);
+	int nidx = overrides[p_idx].parent;
+	bool done = false;
+	if (nidx & FLAG_ID_IS_PATH) {
+		base_path = node_paths[nidx & FLAG_MASK];
+		done = true;
+	}
+	while (!done) {
+		if (nodes[nidx].parent == NO_PARENT_SAVED || nodes[nidx].parent < 0) {
+			sub_path.insert(0, ".");
+			break;
+		}
+
+		if (!p_for_parent || p_idx != nidx) {
+			sub_path.insert(0, names[nodes[nidx].name]);
+		}
+
+		if (nodes[nidx].parent & FLAG_ID_IS_PATH) {
+			base_path = node_paths[nodes[nidx].parent & FLAG_MASK];
+			break;
+		} else {
+			nidx = nodes[nidx].parent & FLAG_MASK;
+		}
+	}
+
+	for (int i = base_path.get_name_count() - 1; i >= 0; i--) {
+		sub_path.insert(0, base_path.get_name(i));
+	}
+
+	if (sub_path.is_empty()) {
+		return NodePath(".");
+	}
+
+	return NodePath(sub_path, false);
+}
+
+NodePath SceneState::get_override_path(int p_idx, bool p_for_parent) const {
+	ERR_FAIL_INDEX_V(p_idx, override_instances.size(), NodePath());
+	return override_instances[p_idx].path;
+}
+
 int SceneState::get_node_property_count(int p_idx) const {
 	ERR_FAIL_INDEX_V(p_idx, nodes.size(), -1);
 	return nodes[p_idx].properties.size();
+}
+
+int SceneState::get_override_node_property_count(int p_idx) const {
+	ERR_FAIL_INDEX_V(p_idx, overrides.size(), -1);
+	return overrides[p_idx].properties.size();
 }
 
 StringName SceneState::get_node_property_name(int p_idx, int p_prop) const {
 	ERR_FAIL_INDEX_V(p_idx, nodes.size(), StringName());
 	ERR_FAIL_INDEX_V(p_prop, nodes[p_idx].properties.size(), StringName());
 	return names[nodes[p_idx].properties[p_prop].name & FLAG_PROP_NAME_MASK];
+}
+
+StringName SceneState::get_override_node_property_name(int p_idx, int p_prop) const {
+	ERR_FAIL_INDEX_V(p_idx, overrides.size(), StringName());
+	ERR_FAIL_INDEX_V(p_prop, overrides[p_idx].properties.size(), StringName());
+	return names[overrides[p_idx].properties[p_prop].name & FLAG_PROP_NAME_MASK];
 }
 
 Vector<String> SceneState::get_node_deferred_nodepath_properties(int p_idx) const {
@@ -1786,6 +1888,13 @@ Variant SceneState::get_node_property_value(int p_idx, int p_prop) const {
 	ERR_FAIL_INDEX_V(p_prop, nodes[p_idx].properties.size(), Variant());
 
 	return variants[nodes[p_idx].properties[p_prop].value];
+}
+
+Variant SceneState::get_override_node_property_value(int p_idx, int p_prop) const {
+	ERR_FAIL_INDEX_V(p_idx, overrides.size(), Variant());
+	ERR_FAIL_INDEX_V(p_prop, overrides[p_idx].properties.size(), Variant());
+
+	return variants[overrides[p_idx].properties[p_prop].value];
 }
 
 NodePath SceneState::get_node_owner_path(int p_idx) const {
@@ -1897,6 +2006,32 @@ Vector<NodePath> SceneState::get_editable_instances() const {
 	return editable_instances;
 }
 
+Vector<SceneState::OverrideData> SceneState::get_override_instances() const {
+	return override_instances;
+}
+
+Vector<SceneState::NodeData> SceneState::get_overrides() const {
+	return overrides;
+}
+
+Variant SceneState::convert_prop_name(int v) const {
+	return names[v];
+}
+
+Variant SceneState::convert_variant(int v) const {
+	return variants[v];
+}
+
+SceneState::OverrideData SceneState::gen_override_data() const {
+	OverrideData data;
+	return data;
+}
+
+SceneState::OverrideData::Property SceneState::gen_property() const {
+	OverrideData::Property prop;
+	return prop;
+}
+
 //add
 
 int SceneState::add_name(const StringName &p_name) {
@@ -1973,6 +2108,10 @@ void SceneState::add_connection(int p_from, int p_to, int p_signal, int p_method
 
 void SceneState::add_editable_instance(const NodePath &p_path) {
 	editable_instances.push_back(p_path);
+}
+
+void SceneState::add_override(const OverrideData &n_data) {
+	override_instances.push_back(n_data);
 }
 
 bool SceneState::remove_group_references(const StringName &p_name) {

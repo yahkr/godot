@@ -41,6 +41,20 @@ class SceneState : public RefCounted {
 	Vector<Variant> variants;
 	Vector<NodePath> node_paths;
 	Vector<NodePath> editable_instances;
+
+	struct OverrideData {
+		NodePath path;
+
+		struct Property {
+			StringName name = "";
+			Variant value = 0;
+		};
+
+		Vector<Property> properties;
+		Vector<int> groups;
+	};
+
+	Vector<OverrideData> override_instances;
 	mutable HashMap<NodePath, int> node_path_cache;
 	mutable HashMap<int, int> base_scene_node_remap;
 
@@ -76,6 +90,7 @@ class SceneState : public RefCounted {
 	};
 
 	Vector<NodeData> nodes;
+	Vector<NodeData> overrides;
 
 	struct ConnectionData {
 		int from = 0;
@@ -103,6 +118,7 @@ class SceneState : public RefCounted {
 	int _find_base_scene_node_remap_key(int p_idx) const;
 
 #ifdef TOOLS_ENABLED
+
 public:
 	typedef void (*InstantiationWarningNotify)(const String &p_warning);
 
@@ -135,6 +151,9 @@ public:
 		int node = -1;
 	};
 
+	void process_properties(Node *p_node, HashMap<StringName, int> &name_map,
+			HashMap<Variant, int, VariantHasher, VariantComparator> &variant_map, SceneState::NodeData &nd,
+			Vector<SceneState::PackState> states_stack);
 	static void set_disable_placeholders(bool p_disable);
 	static Ref<Resource> get_remap_resource(const Ref<Resource> &p_resource, HashMap<Ref<Resource>, Ref<Resource>> &remap_cache, const Ref<Resource> &p_fallback, Node *p_for_scene);
 
@@ -171,6 +190,8 @@ public:
 	StringName get_node_type(int p_idx) const;
 	StringName get_node_name(int p_idx) const;
 	NodePath get_node_path(int p_idx, bool p_for_parent = false) const;
+	NodePath get_overrides_path(int p_idx, bool p_for_parent) const;
+	NodePath get_override_path(int p_idx, bool p_for_parent) const;
 	NodePath get_node_owner_path(int p_idx) const;
 	Ref<PackedScene> get_node_instance(int p_idx) const;
 	String get_node_instance_placeholder(int p_idx) const;
@@ -179,8 +200,11 @@ public:
 	int get_node_index(int p_idx) const;
 
 	int get_node_property_count(int p_idx) const;
+	int get_override_node_property_count(int p_idx) const;
 	StringName get_node_property_name(int p_idx, int p_prop) const;
+	StringName get_override_node_property_name(int p_idx, int p_prop) const;
 	Variant get_node_property_value(int p_idx, int p_prop) const;
+	Variant get_override_node_property_value(int p_idx, int p_prop) const;
 	Vector<String> get_node_deferred_nodepath_properties(int p_idx) const;
 
 	int get_connection_count() const;
@@ -195,6 +219,12 @@ public:
 	bool has_connection(const NodePath &p_node_from, const StringName &p_signal, const NodePath &p_node_to, const StringName &p_method, bool p_no_inheritance = false);
 
 	Vector<NodePath> get_editable_instances() const;
+	Vector<SceneState::OverrideData> get_override_instances() const;
+	Vector<SceneState::NodeData> get_overrides() const;
+	Variant convert_prop_name(int v) const;
+	Variant convert_variant(int v) const;
+	OverrideData gen_override_data() const;
+	OverrideData::Property gen_property() const;
 
 	//build API
 
@@ -207,6 +237,7 @@ public:
 	void set_base_scene(int p_idx);
 	void add_connection(int p_from, int p_to, int p_signal, int p_method, int p_flags, int p_unbinds, const Vector<int> &p_binds);
 	void add_editable_instance(const NodePath &p_path);
+	void add_override(const OverrideData &n_data);
 
 	bool remove_group_references(const StringName &p_name);
 	bool rename_group_references(const StringName &p_old_name, const StringName &p_new_name);

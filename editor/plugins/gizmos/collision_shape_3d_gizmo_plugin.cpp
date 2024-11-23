@@ -32,6 +32,7 @@
 
 #include "core/math/convex_hull.h"
 #include "core/math/geometry_3d.h"
+#include "editor/editor_settings.h"
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/plugins/gizmos/gizmo_3d_helper.h"
 #include "editor/plugins/node_3d_editor_plugin.h"
@@ -353,6 +354,12 @@ void CollisionShape3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
 		if (array_mesh.is_valid()) {
 			p_gizmo->add_mesh(array_mesh, material_arraymesh);
 		}
+	}
+
+	const bool show_collision_shapes_only_when_selected = EDITOR_GET("editors/3d_gizmos/gizmo_settings/show_collision_shapes_only_when_selected");
+
+	if (!p_gizmo->is_selected() && show_collision_shapes_only_when_selected) {
+		return;
 	}
 
 	if (Object::cast_to<SphereShape3D>(*s)) {

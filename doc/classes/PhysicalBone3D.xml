@@ -86,6 +86,9 @@
 		<member name="gravity_scale" type="float" setter="set_gravity_scale" getter="get_gravity_scale" default="1.0">
 			This is multiplied by [member ProjectSettings.physics/3d/default_gravity] to produce this body's gravity. For example, a value of [code]1.0[/code] will apply normal gravity, [code]2.0[/code] will apply double the gravity, and [code]0.5[/code] will apply half the gravity to this body.
 		</member>
+		<member name="joint_exclude_nodes_from_collision" type="bool" setter="set_joint_exclude_nodes_from_collision" getter="get_joint_exclude_nodes_from_collision" default="true">
+			If [code]true[/code], the bone is not able to collide with the parent bone.
+		</member>
 		<member name="joint_offset" type="Transform3D" setter="set_joint_offset" getter="get_joint_offset" default="Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)">
 			Sets the joint's transform.
 		</member>
